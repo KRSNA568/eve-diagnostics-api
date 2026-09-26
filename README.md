@@ -89,7 +89,7 @@ MIGRATIONS_DATABASE_URL=postgresql://postgres.<ref>:<password>@aws-0-<region>.po
 ```
 
 For the compose stack, put the same values in `DOCKER_DATABASE_URL` /
-`DOCKER_MIGRATIONS_DATABASE_URL` and remove `COMPOSE_PROFILES=local-db`. Three Supabase
+`DOCKER_MIGRATIONS_DATABASE_URL` and remove `COMPOSE_PROFILES=local-db`. Four Supabase
 specifics are handled in code:
 
 - **Pooler-safe driver settings.** The app uses the Supavisor transaction pooler (port 6543),
@@ -99,8 +99,26 @@ specifics are handled in code:
   one transaction; the code deliberately avoids session-level features such as advisory locks.
 - **The public Data API is closed.** Supabase exposes every table in `public` through
   PostgREST. Every migration enables row-level security with no policies, so the `anon` and
-  `authenticated` roles can do nothing; the backend connects as the table owner and is
-  unaffected. A test fails if any table lacks RLS.
+  `authenticated` roles can do nothing; the API connects as `eve_app`, a least-privileged
+  role that owns these tables and nothing else, so as their owner it is unaffected (RLS is
+  enabled, not forced). A test fails if any table lacks RLS. Supabase's linter reports each
+  of those tables as `rls_enabled_no_policy` (INFO) - the intended posture here, not an
+  oversight: this API never reaches the database through PostgREST, so a policy would only
+  widen the surface.
+- **Platform hardening lives outside the migration chain.** The project ships an `ensure_rls`
+  event trigger whose `SECURITY DEFINER` function `public.rls_auto_enable()` enables RLS on
+  any newly created table - harmless belt and braces next to the explicit `ENABLE ROW LEVEL
+  SECURITY` in each migration, so it stays. Its grants are the problem: Postgres grants
+  EXECUTE to `PUBLIC` and Supabase to `anon` / `authenticated` / `service_role`, publishing
+  it at `/rest/v1/rpc/rls_auto_enable`. Nothing there is exploitable - a function returning
+  `event_trigger` cannot be invoked from SQL - but it is a needless `SECURITY DEFINER` entry
+  point in the exposed schema, and the only WARN in the project's advisories.
+  [`scripts/harden_supabase.sql`](scripts/harden_supabase.sql) revokes those grants; it is
+  idempotent and verifies its own effect by re-reading the ACL. It is a one-time script
+  rather than a migration on purpose: the function is owned by `postgres`, `eve_app` cannot
+  revoke grants on an object it does not own, and a migration that cannot succeed as the
+  migration role would only break `alembic upgrade head`. Run it as `postgres`, from the
+  Supabase SQL editor.
 - **Plain `postgresql://` URLs**, as shown in the Supabase dashboard, are accepted and routed
   to the psycopg driver.
 
