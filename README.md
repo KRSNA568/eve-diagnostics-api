@@ -4,11 +4,12 @@ Backend service for diagnostic test bookings and simulated payments, built with 
 
 ## Development
 
-Requires [uv](https://docs.astral.sh/uv/) and Python 3.13.
+Requires [uv](https://docs.astral.sh/uv/), Python 3.13 and Docker (for the test suite).
 
 ```bash
 uv sync                                  # create .venv and install dependencies
-cp .env.example .env
-uv run uvicorn eve.main:app --reload     # http://localhost:8000/docs
-uv run pytest
+cp .env.example .env                     # then set DATABASE_URL (Supabase or local)
+uv run alembic upgrade head              # apply database migrations
+uv run uvicorn eve.main:create_app --factory --reload   # http://localhost:8000/docs
+uv run pytest                            # starts a throwaway Postgres via testcontainers
 ```
