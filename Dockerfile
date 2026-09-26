@@ -28,7 +28,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ---------------------------------------------------------------- runtime
 FROM python:3.13-slim AS runtime
 
-RUN groupadd --system app && useradd --system --gid app --home-dir /app app
+# pip is never used at runtime - the app runs from /app/.venv, which uv built without it - and
+# it vendors its own msgpack and setuptools, both with published CVEs. Drop it.
+RUN python -m pip uninstall --yes --root-user-action=ignore pip \
+ && groupadd --system app && useradd --system --gid app --home-dir /app app
 
 WORKDIR /app
 COPY --from=builder --chown=app:app /app/.venv /app/.venv

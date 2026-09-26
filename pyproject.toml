@@ -1,5 +1,5 @@
 [project]
-name = "eve"
+name = "eve-diagnostics"
 version = "0.1.0"
 description = "Diagnostic test booking and simulated payments API for EVE Healthcare"
 readme = "README.md"
@@ -40,6 +40,12 @@ dev = [
 [build-system]
 requires = ["uv_build>=0.12,<0.13"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+# The distribution is `eve-diagnostics` because plain `eve` collides with an unrelated PyPI
+# project, whose CVEs vulnerability scanners then report against this one. The import
+# package stays `eve`.
+module-name = "eve"
 
 # ---------------------------------------------------------------- alembic
 [tool.alembic]

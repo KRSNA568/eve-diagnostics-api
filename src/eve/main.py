@@ -73,7 +73,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(
         title=settings.app_name,
-        version=version("eve"),
+        version=version("eve-diagnostics"),
         description=API_DESCRIPTION,
         openapi_tags=OPENAPI_TAGS,
         # Keep the Bearer token entered via "Authorize" across page reloads.
