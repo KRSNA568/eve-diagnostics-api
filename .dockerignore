@@ -1,0 +1,22 @@
+# Only what the image needs: pyproject.toml, uv.lock, README.md, src/, migrations/
+.git
+.github
+.venv
+.env
+.env.*
+!.env.example
+**/__pycache__
+*.pyc
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.coverage
+coverage.xml
+htmlcov
+tests
+scripts
+Dockerfile
+docker-compose.yml
+Makefile
+.pre-commit-config.yaml
+.python-version

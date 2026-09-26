@@ -2,6 +2,15 @@
 
 Backend service for diagnostic test bookings and simulated payments, built with FastAPI.
 
+## Run with Docker
+
+```bash
+cp .env.example .env
+docker compose up --build        # API, worker, Postgres, Redis; migrations run first
+docker compose exec api eve seed # demo catalog
+open http://localhost:8000/docs
+```
+
 ## Development
 
 Requires [uv](https://docs.astral.sh/uv/), Python 3.13 and Docker (for the test suite).

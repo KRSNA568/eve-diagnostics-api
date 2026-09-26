@@ -1,0 +1,96 @@
+# Full local stack:   cp .env.example .env && docker compose up --build
+#
+# The `db` service belongs to the `local-db` profile, enabled by COMPOSE_PROFILES in .env.
+# To use Supabase instead: remove that profile and set DOCKER_DATABASE_URL (and
+# DOCKER_MIGRATIONS_DATABASE_URL) in .env to your Supabase connection strings.
+
+name: eve
+
+x-app: &app
+  build: .
+  image: eve-api:local
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    # Inside the compose network services are reached by name, not via localhost.
+    DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql://eve:eve@db:5432/eve}
+    MIGRATIONS_DATABASE_URL: ${DOCKER_MIGRATIONS_DATABASE_URL:-}
+    REDIS_URL: redis://redis:6379/0
+    LOG_FORMAT: json
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:16-alpine
+    profiles: [local-db]
+    environment:
+      POSTGRES_USER: eve
+      POSTGRES_PASSWORD: eve
+      POSTGRES_DB: eve
+    ports:
+      - "5433:5432" # 5433 on the host: leaves a native Postgres on 5432 alone
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eve -d eve"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    # Append-only file: queued jobs survive a Redis restart.
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6380:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # One-shot: apply migrations before the API and worker start, so replicas never race.
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    healthcheck:
+      disable: true
+    depends_on:
+      db:
+        condition: service_healthy
+        required: false
+
+  api:
+    <<: *app
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    <<: *app
+    command: ["arq", "eve.worker.settings.WorkerSettings"]
+    healthcheck:
+      test: ["CMD", "arq", "--check", "eve.worker.settings.WorkerSettings"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:
