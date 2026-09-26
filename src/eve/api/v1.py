@@ -2,6 +2,7 @@ from fastapi import APIRouter, status
 
 from eve.api import health
 from eve.auth import router as auth
+from eve.bookings import router as bookings
 from eve.catalog import router as catalog
 from eve.core.errors import ErrorResponse
 
@@ -23,3 +24,4 @@ api_router.include_router(health.router)
 api_router.include_router(auth.router)
 api_router.include_router(catalog.centres_router)
 api_router.include_router(catalog.tests_router)
+api_router.include_router(bookings.router)

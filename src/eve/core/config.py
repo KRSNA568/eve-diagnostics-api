@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     access_token_ttl_minutes: int = Field(default=15, gt=0)
     refresh_token_ttl_days: int = Field(default=7, gt=0)
 
+    # --- Bookings -------------------------------------------------------------------------
+    booking_min_lead_minutes: int = Field(default=30, ge=0)
+    booking_max_days_ahead: int = Field(default=60, gt=0)
+
     @field_validator("database_url", "migrations_database_url")
     @classmethod
     def _use_psycopg_driver(cls, url: str | None) -> str | None:

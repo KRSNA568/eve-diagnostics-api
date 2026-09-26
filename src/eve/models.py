@@ -5,7 +5,8 @@ autogenerate and the test suite rely on. Add each new feature's models here.
 """
 
 from eve.auth.models import User
+from eve.bookings.models import Booking
 from eve.catalog.models import CentreTest, DiagnosticCentre, DiagnosticTest
 from eve.core.db import Base
 
-__all__ = ["Base", "CentreTest", "DiagnosticCentre", "DiagnosticTest", "User"]
+__all__ = ["Base", "Booking", "CentreTest", "DiagnosticCentre", "DiagnosticTest", "User"]

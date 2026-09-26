@@ -80,5 +80,27 @@ class CatalogRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def get_bookable_offering(self, centre_id: UUID, test_id: UUID) -> CentreTest | None:
+        """The offering if it can be booked right now: available, at an active centre, for an
+        active test.
+
+        FOR SHARE on the offering row: a concurrent price change waits for the booking
+        transaction, so the snapshotted amount is never from a half-applied update.
+        """
+        stmt = (
+            select(CentreTest)
+            .join(CentreTest.centre)
+            .join(CentreTest.test)
+            .where(
+                CentreTest.centre_id == centre_id,
+                CentreTest.test_id == test_id,
+                CentreTest.is_available,
+                DiagnosticCentre.is_active,
+                DiagnosticTest.is_active,
+            )
+            .with_for_update(read=True, of=CentreTest)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     def add(self, entity: DiagnosticCentre | DiagnosticTest | CentreTest) -> None:
         self._session.add(entity)

@@ -5,6 +5,7 @@ fields that matter to them, e.g. `await UserFactory.create_async(is_admin=True)`
 The integration conftest binds `__async_session__` to the test's session.
 """
 
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import uuid4
@@ -13,6 +14,8 @@ from polyfactory import Ignore, Use
 from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
 
 from eve.auth.models import User
+from eve.bookings.models import Booking
+from eve.bookings.state import BookingStatus
 from eve.catalog.models import CentreTest, DiagnosticCentre, DiagnosticTest
 from eve.core.config import Settings
 from eve.core.db import Base
@@ -66,12 +69,30 @@ class OfferingFactory(ModelFactory[CentreTest]):
     is_available = True
 
 
+def in_days(days: float) -> datetime:
+    """An aware UTC datetime `days` from now, on the minute."""
+    return (datetime.now(UTC) + timedelta(days=days)).replace(second=0, microsecond=0)
+
+
+class BookingFactory(ModelFactory[Booking]):
+    """Pass `user_id`, `centre_id` and `test_id` explicitly (they must form an offering)."""
+
+    appointment_at = Use(lambda: in_days(3))
+    amount = Decimal("499.00")
+    currency = "INR"
+    status = BookingStatus.PENDING
+    status_reason = None
+    confirmed_at = None
+    cancelled_at = None
+
+
 # Every factory whose `__async_session__` the integration conftest binds per test.
 PERSISTED_FACTORIES: tuple[type[ModelFactory[Any]], ...] = (
     UserFactory,
     CentreFactory,
     DiagnosticTestFactory,
     OfferingFactory,
+    BookingFactory,
 )
 
 
