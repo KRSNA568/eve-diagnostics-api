@@ -1,6 +1,20 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, status
 
 from eve.api import health
+from eve.core.errors import ErrorResponse
 
-api_router = APIRouter()
+# Documents the shared error envelope on every route (and replaces FastAPI's default
+# 422 schema, which does not match what the API actually returns).
+api_router = APIRouter(
+    responses={
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {
+            "model": ErrorResponse,
+            "description": "Request validation failed",
+        },
+        status.HTTP_500_INTERNAL_SERVER_ERROR: {
+            "model": ErrorResponse,
+            "description": "Unexpected server error",
+        },
+    }
+)
 api_router.include_router(health.router)

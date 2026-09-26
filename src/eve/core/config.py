@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     debug: bool = False
     api_v1_prefix: str = "/api/v1"
 
+    # --- Logging --------------------------------------------------------------------------
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    # json for containers / log shippers, console for humans in a terminal.
+    log_format: Literal["json", "console"] = "json"
+
     # --- Database -------------------------------------------------------------------------
     # On Supabase, DATABASE_URL is the Supavisor pooler URL used by the running app and
     # MIGRATIONS_DATABASE_URL is the session-mode / direct URL used by Alembic.
