@@ -125,4 +125,5 @@ concurrency = ["greenlet", "thread"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
+fail_under = 90  # CI gate
 exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "@overload"]
