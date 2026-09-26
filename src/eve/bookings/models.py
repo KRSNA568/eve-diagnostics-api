@@ -4,7 +4,6 @@ from uuid import UUID
 
 from sqlalchemy import (
     CheckConstraint,
-    Enum,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -16,7 +15,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from eve.bookings.state import ACTIVE_STATUSES, BOOKING_STATES, BookingStatus
 from eve.catalog.models import DiagnosticCentre, DiagnosticTest
-from eve.core.db import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from eve.core.db import Base, TimestampMixin, UUIDPrimaryKeyMixin, status_check, status_enum
 
 _ACTIVE = ", ".join(f"'{s.value}'" for s in ACTIVE_STATUSES)
 
@@ -46,6 +45,7 @@ class Booking(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Index("ix_bookings_user_id_created_at", "user_id", "created_at"),
         # Serves the job that expires unpaid PENDING bookings.
         Index("ix_bookings_status_created_at", "status", "created_at"),
+        status_check(BookingStatus),
         CheckConstraint("amount > 0", name="amount_positive"),
         CheckConstraint("currency ~ '^[A-Z]{3}$'", name="currency_iso4217"),
     )
@@ -59,16 +59,8 @@ class Booking(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # Price at the moment of booking; later catalog price changes do not affect it.
     amount: Mapped[Decimal] = mapped_column(Numeric(10, 2))
     currency: Mapped[str] = mapped_column(String(3))
-    # VARCHAR + CHECK rather than a native enum: adding a state is a plain migration.
     status: Mapped[BookingStatus] = mapped_column(
-        Enum(
-            BookingStatus,
-            name="status",
-            native_enum=False,
-            create_constraint=True,
-            length=16,
-            validate_strings=True,
-        ),
+        status_enum(BookingStatus),
         default=BookingStatus.PENDING,
     )
     status_reason: Mapped[str | None] = mapped_column(String(200))

@@ -8,6 +8,7 @@ the test suite injects one through `config.attributes["database_url"]`.
 import logging
 from typing import Any
 
+import sqlalchemy as sa
 from alembic import context
 from alembic.autogenerate.api import AutogenContext
 from sqlalchemy import create_engine, pool
@@ -35,6 +36,11 @@ def render_item(type_: str, obj: Any, autogen_context: AutogenContext) -> str | 
     """
     if type_ == "type" and isinstance(obj, UTCDateTime):
         return "sa.DateTime(timezone=True)"
+    # Non-native enums are VARCHAR + a CHECK constraint, and the CHECK is already rendered
+    # (with its conventional name) from the table's constraints. Rendering sa.Enum as well
+    # would create a second, unnamed-convention CHECK.
+    if type_ == "type" and isinstance(obj, sa.Enum) and not obj.native_enum:
+        return f"sa.String(length={obj.length})"
     return False
 
 

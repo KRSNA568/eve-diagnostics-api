@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     booking_min_lead_minutes: int = Field(default=30, ge=0)
     booking_max_days_ahead: int = Field(default=60, gt=0)
 
+    # --- Payments -------------------------------------------------------------------------
+    # Approval probability for the `mock_card_random` test payment method.
+    mock_payment_success_rate: float = Field(default=0.8, ge=0, le=1)
+
     @field_validator("database_url", "migrations_database_url")
     @classmethod
     def _use_psycopg_driver(cls, url: str | None) -> str | None:

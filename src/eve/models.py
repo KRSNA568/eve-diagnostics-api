@@ -8,5 +8,6 @@ from eve.auth.models import User
 from eve.bookings.models import Booking
 from eve.catalog.models import CentreTest, DiagnosticCentre, DiagnosticTest
 from eve.core.db import Base
+from eve.payments.models import Payment
 
-__all__ = ["Base", "Booking", "CentreTest", "DiagnosticCentre", "DiagnosticTest", "User"]
+__all__ = ["Base", "Booking", "CentreTest", "DiagnosticCentre", "DiagnosticTest", "Payment", "User"]

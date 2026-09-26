@@ -5,6 +5,7 @@ from eve.auth import router as auth
 from eve.bookings import router as bookings
 from eve.catalog import router as catalog
 from eve.core.errors import ErrorResponse
+from eve.payments import router as payments
 
 # Documents the shared error envelope on every route (and replaces FastAPI's default
 # 422 schema, which does not match what the API actually returns).
@@ -25,3 +26,4 @@ api_router.include_router(auth.router)
 api_router.include_router(catalog.centres_router)
 api_router.include_router(catalog.tests_router)
 api_router.include_router(bookings.router)
+api_router.include_router(payments.router)

@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -12,48 +11,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from eve.auth.models import User
 from eve.bookings.models import Booking
 from eve.bookings.state import BookingStatus
-from eve.catalog.models import CentreTest, DiagnosticCentre, DiagnosticTest
 from tests.factories import (
     AuthHeaders,
     BookingFactory,
-    CentreFactory,
     DiagnosticTestFactory,
-    OfferingFactory,
+    Offering,
     UserFactory,
+    book,
     in_days,
 )
 
 BOOKINGS = "/api/v1/bookings/"
-
-
-@dataclass
-class Offering:
-    centre: DiagnosticCentre
-    test: DiagnosticTest
-    row: CentreTest
-
-    def booking_payload(self, **overrides: Any) -> dict[str, Any]:
-        return {
-            "centre_id": str(self.centre.id),
-            "test_id": str(self.test.id),
-            "appointment_at": in_days(3).isoformat(),
-        } | overrides
-
-
-@pytest.fixture
-async def offering(db_session: AsyncSession) -> Offering:
-    centre = await CentreFactory.create_async(name="CareLab Andheri", city="Mumbai")
-    test = await DiagnosticTestFactory.create_async(code="CBC", name="Complete Blood Count")
-    row = await OfferingFactory.create_async(
-        centre_id=centre.id, test_id=test.id, price=Decimal("349.00")
-    )
-    return Offering(centre, test, row)
-
-
-async def book(offering: Offering, user: User, **overrides: Any) -> Booking:
-    return await BookingFactory.create_async(
-        user_id=user.id, centre_id=offering.centre.id, test_id=offering.test.id, **overrides
-    )
 
 
 # --------------------------------------------------------------------------- create

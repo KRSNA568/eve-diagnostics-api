@@ -1,10 +1,11 @@
-"""Test data factories (polyfactory).
+"""Test data factories (polyfactory) and small builders shared across tests.
 
 Each factory builds valid model instances with sensible defaults; tests override only the
 fields that matter to them, e.g. `await UserFactory.create_async(is_admin=True)`.
 The integration conftest binds `__async_session__` to the test's session.
 """
 
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -20,6 +21,7 @@ from eve.catalog.models import CentreTest, DiagnosticCentre, DiagnosticTest
 from eve.core.config import Settings
 from eve.core.db import Base
 from eve.core.security import TokenType, create_token, hash_password
+from eve.payments.models import Payment, PaymentStatus
 
 TEST_PASSWORD = "Password123"
 # Argon2 is deliberately slow: hash the shared test password once, not per user.
@@ -86,6 +88,19 @@ class BookingFactory(ModelFactory[Booking]):
     cancelled_at = None
 
 
+class PaymentFactory(ModelFactory[Payment]):
+    """Pass `booking_id` explicitly."""
+
+    amount = Decimal("499.00")
+    currency = "INR"
+    status = PaymentStatus.PENDING
+    provider = "mockpay"
+    provider_reference = Use(lambda: f"mock_pay_{uuid4().hex}")
+    idempotency_key = None
+    failure_reason = None
+    completed_at = None
+
+
 # Every factory whose `__async_session__` the integration conftest binds per test.
 PERSISTED_FACTORIES: tuple[type[ModelFactory[Any]], ...] = (
     UserFactory,
@@ -93,6 +108,7 @@ PERSISTED_FACTORIES: tuple[type[ModelFactory[Any]], ...] = (
     DiagnosticTestFactory,
     OfferingFactory,
     BookingFactory,
+    PaymentFactory,
 )
 
 
@@ -114,3 +130,26 @@ def make_settings(**overrides: Any) -> Settings:
         "jwt_secret_key": "unit-test-secret-that-is-at-least-32-bytes",
     }
     return Settings(_env_file=None, **(values | overrides))
+
+
+@dataclass
+class Offering:
+    """A centre offering one test - the minimum needed to make a booking."""
+
+    centre: DiagnosticCentre
+    test: DiagnosticTest
+    row: CentreTest
+
+    def booking_payload(self, **overrides: Any) -> dict[str, Any]:
+        return {
+            "centre_id": str(self.centre.id),
+            "test_id": str(self.test.id),
+            "appointment_at": in_days(3).isoformat(),
+        } | overrides
+
+
+async def book(offering: Offering, user: User, **overrides: Any) -> Booking:
+    """Insert a booking directly (bypassing the API) for arranging test state."""
+    return await BookingFactory.create_async(
+        user_id=user.id, centre_id=offering.centre.id, test_id=offering.test.id, **overrides
+    )

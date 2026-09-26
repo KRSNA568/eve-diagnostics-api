@@ -1,8 +1,17 @@
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any, ClassVar
 from uuid import UUID
 
-from sqlalchemy import DateTime, Dialect, MetaData, TypeDecorator, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Dialect,
+    Enum,
+    MetaData,
+    TypeDecorator,
+    func,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -65,6 +74,19 @@ class TimestampMixin:
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), onupdate=func.now(), sort_order=101
     )
+
+
+def status_enum(enum_cls: type[StrEnum]) -> Enum:
+    """A status column stored as VARCHAR rather than a native Postgres enum, so adding a
+    state is a plain migration. Pair it with `status_check()`."""
+    return Enum(enum_cls, native_enum=False, create_constraint=False, length=16)
+
+
+def status_check(enum_cls: type[StrEnum], column: str = "status") -> CheckConstraint:
+    """The CHECK constraint restricting `column` to the enum's values (declared explicitly,
+    so it gets exactly one conventionally named constraint: `ck_<table>_<column>`)."""
+    values = ", ".join(f"'{member.value}'" for member in enum_cls)
+    return CheckConstraint(f"{column} IN ({values})", name=column)
 
 
 def violated_constraint(exc: IntegrityError) -> str | None:

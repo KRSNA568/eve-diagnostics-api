@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from decimal import Decimal
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -12,7 +13,15 @@ from eve.core.config import Settings
 from eve.core.db import create_session_factory
 from eve.main import create_app
 from eve.models import Base
-from tests.factories import PERSISTED_FACTORIES, AuthHeaders, UserFactory
+from tests.factories import (
+    PERSISTED_FACTORIES,
+    AuthHeaders,
+    CentreFactory,
+    DiagnosticTestFactory,
+    Offering,
+    OfferingFactory,
+    UserFactory,
+)
 
 
 @pytest.fixture
@@ -50,6 +59,17 @@ async def admin(db_session: AsyncSession) -> User:
 @pytest.fixture
 def auth_headers(settings: Settings) -> AuthHeaders:
     return AuthHeaders(settings)
+
+
+@pytest.fixture
+async def offering(db_session: AsyncSession) -> Offering:
+    """CBC at a Mumbai centre for 349.00 INR."""
+    centre = await CentreFactory.create_async(name="CareLab Andheri", city="Mumbai")
+    test = await DiagnosticTestFactory.create_async(code="CBC", name="Complete Blood Count")
+    row = await OfferingFactory.create_async(
+        centre_id=centre.id, test_id=test.id, price=Decimal("349.00")
+    )
+    return Offering(centre, test, row)
 
 
 @pytest.fixture(autouse=True)
