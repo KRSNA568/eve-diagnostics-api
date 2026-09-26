@@ -22,11 +22,13 @@ import structlog
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from eve.bookings.jobs import notify_booking_confirmed
 from eve.bookings.models import Booking
 from eve.bookings.repository import BookingRepository
 from eve.bookings.state import BookingStatus
 from eve.core.errors import ConflictError, NotFoundError
 from eve.core.pagination import Page, PageParams, paginate
+from eve.core.queue import TaskQueue
 from eve.payments.gateway import MockPaymentGateway
 from eve.payments.models import Payment, PaymentStatus, WebhookEvent, WebhookEventStatus
 from eve.payments.repository import PaymentRepository, WebhookEventRepository
@@ -70,11 +72,13 @@ class _Result:
     status: WebhookEventStatus
     outcome: Outcome
     payment: Payment | None = None
+    confirmed_booking_id: UUID | None = None  # set when this event confirmed a booking
 
 
 class WebhookService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, queue: TaskQueue | None = None) -> None:
         self._session = session
+        self._queue = queue
         self._events = WebhookEventRepository(session)
         self._bookings = BookingRepository(session)
         self._payments = PaymentRepository(session)
@@ -124,6 +128,8 @@ class WebhookService:
         event.last_error = None
         event.processed_at = datetime.now(UTC)
         await self._session.commit()
+        if result.confirmed_booking_id is not None:
+            await notify_booking_confirmed(self._queue, result.confirmed_booking_id)
 
         level = (
             "info" if result.outcome in (Outcome.APPLIED, Outcome.ALREADY_APPLIED) else "warning"
@@ -200,7 +206,8 @@ class WebhookService:
 
         self._payments.add(payment)  # no-op if it already exists
         apply_payment_result(booking, payment, target, data.failure_reason)
-        return _Result(WebhookEventStatus.PROCESSED, Outcome.APPLIED, payment)
+        confirmed = booking.id if target is PaymentStatus.SUCCESS else None
+        return _Result(WebhookEventStatus.PROCESSED, Outcome.APPLIED, payment, confirmed)
 
     async def _resolve_payment(self, booking: Booking, data: WebhookPaymentData) -> Payment:
         """The payment the event refers to. One the provider reports but we have never seen

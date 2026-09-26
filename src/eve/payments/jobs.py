@@ -1,13 +1,17 @@
 """Background jobs for payments, run by the ARQ worker."""
 
 import random
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 import structlog
 from arq import Retry
+from sqlalchemy import select
 
 from eve.core.config import Settings
+from eve.core.queue import ArqTaskQueue, TaskQueue
+from eve.payments.models import WebhookEvent, WebhookEventStatus
 from eve.payments.webhook import WebhookService
 
 logger = structlog.get_logger(__name__)
@@ -19,6 +23,11 @@ _jitter_rng = random.Random()  # noqa: S311 - retry scheduling, not security
 
 def webhook_job_id(event_pk: UUID) -> str:
     return f"webhook:{event_pk}"
+
+
+def _queue(ctx: dict[str, Any]) -> TaskQueue | None:
+    """The worker's own queue (ARQ puts its Redis connection in ctx["redis"])."""
+    return ArqTaskQueue(ctx["redis"]) if "redis" in ctx else None
 
 
 def retry_delay(
@@ -45,7 +54,7 @@ async def process_webhook_event(ctx: dict[str, Any], event_pk: str) -> str | Non
 
     try:
         async with ctx["session_factory"]() as session:
-            status = await WebhookService(session).process(event_id)
+            status = await WebhookService(session, _queue(ctx)).process(event_id)
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
         if attempt >= settings.webhook_max_attempts:
@@ -64,3 +73,31 @@ async def process_webhook_event(ctx: dict[str, Any], event_pk: str) -> str | Non
         raise Retry(defer=delay) from exc
 
     return status.value if status else None
+
+
+async def requeue_stale_webhook_events(ctx: dict[str, Any]) -> int:
+    """Re-queue events stuck in RECEIVED - e.g. Redis was down when they arrived.
+
+    The inbox table is the source of truth and the queue only a delivery mechanism, so
+    nothing received can be lost. Re-queueing uses the event's normal job id, so an event
+    whose job is still waiting in the queue is not queued twice.
+    """
+    settings: Settings = ctx["settings"]
+    queue = _queue(ctx)
+    if queue is None:
+        return 0
+    cutoff = datetime.now(UTC) - timedelta(seconds=settings.webhook_stale_after_seconds)
+
+    async with ctx["session_factory"]() as session:
+        stmt = select(WebhookEvent.id).where(
+            WebhookEvent.status == WebhookEventStatus.RECEIVED, WebhookEvent.created_at < cutoff
+        )
+        stale = (await session.execute(stmt)).scalars().all()
+
+    requeued = 0
+    for event_pk in stale:
+        if await queue.enqueue(PROCESS_WEBHOOK_JOB, str(event_pk), job_id=webhook_job_id(event_pk)):
+            requeued += 1
+    if stale:
+        logger.warning("webhook.stale_events_requeued", found=len(stale), requeued=requeued)
+    return requeued

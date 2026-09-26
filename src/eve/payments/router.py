@@ -32,9 +32,11 @@ def get_payment_gateway(settings: SettingsDep) -> PaymentGateway:
 
 
 def get_payment_service(
-    session: SessionDep, gateway: Annotated[PaymentGateway, Depends(get_payment_gateway)]
+    session: SessionDep,
+    gateway: Annotated[PaymentGateway, Depends(get_payment_gateway)],
+    queue: TaskQueueDep,
 ) -> PaymentService:
-    return PaymentService(session, gateway)
+    return PaymentService(session, gateway, queue)
 
 
 PaymentServiceDep = Annotated[PaymentService, Depends(get_payment_service)]

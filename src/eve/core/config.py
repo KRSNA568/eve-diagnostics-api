@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     # --- Bookings -------------------------------------------------------------------------
     booking_min_lead_minutes: int = Field(default=30, ge=0)
     booking_max_days_ahead: int = Field(default=60, gt=0)
+    # Unpaid (PENDING) bookings are cancelled after this long, releasing the slot.
+    booking_payment_window_minutes: int = Field(default=15, gt=0)
 
     # --- Payments -------------------------------------------------------------------------
     # Approval probability for the `mock_card_random` test payment method.
@@ -60,6 +62,8 @@ class Settings(BaseSettings):
     webhook_max_attempts: int = Field(default=5, ge=1)
     webhook_retry_base_seconds: float = Field(default=2.0, gt=0)
     webhook_retry_max_seconds: float = Field(default=300.0, gt=0)
+    # Events still RECEIVED after this long are assumed lost from the queue and re-queued.
+    webhook_stale_after_seconds: int = Field(default=120, gt=0)
 
     @field_validator("database_url", "migrations_database_url")
     @classmethod

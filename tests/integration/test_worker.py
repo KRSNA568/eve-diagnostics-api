@@ -224,7 +224,14 @@ async def test_worker_entrypoint_wires_jobs_and_database() -> None:
     from eve.worker.registry import shutdown, startup
     from eve.worker.settings import WorkerSettings
 
-    assert [f.name for f in WorkerSettings.functions] == [PROCESS_WEBHOOK_JOB]
+    assert [f.name for f in WorkerSettings.functions] == [
+        PROCESS_WEBHOOK_JOB,
+        "send_booking_confirmation",
+    ]
+    assert [c.name for c in WorkerSettings.cron_jobs] == [
+        "cron:expire_unpaid_bookings",
+        "cron:requeue_stale_webhook_events",
+    ]
     ctx: dict[str, Any] = {}
     await startup(ctx)
     try:

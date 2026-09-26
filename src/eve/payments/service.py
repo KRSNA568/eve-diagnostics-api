@@ -6,11 +6,13 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from eve.auth.models import User
+from eve.bookings.jobs import notify_booking_confirmed
 from eve.bookings.models import Booking
 from eve.bookings.repository import BookingRepository
 from eve.bookings.state import BookingStatus
 from eve.core.errors import ConflictError, NotFoundError
 from eve.core.pagination import Page, PageParams, paginate
+from eve.core.queue import TaskQueue
 from eve.payments.gateway import ChargeRequest, PaymentGateway
 from eve.payments.models import Payment, PaymentStatus
 from eve.payments.repository import PaymentRepository
@@ -47,9 +49,12 @@ def apply_payment_result(
 
 
 class PaymentService:
-    def __init__(self, session: AsyncSession, gateway: PaymentGateway) -> None:
+    def __init__(
+        self, session: AsyncSession, gateway: PaymentGateway, queue: TaskQueue | None = None
+    ) -> None:
         self._session = session
         self._gateway = gateway
+        self._queue = queue
         self._bookings = BookingRepository(session)
         self._payments = PaymentRepository(session)
 
@@ -101,6 +106,8 @@ class PaymentService:
         )
         apply_payment_result(booking, payment, result.status, result.failure_reason)
         await self._session.commit()
+        if result.status is PaymentStatus.SUCCESS:  # the booking was just confirmed
+            await notify_booking_confirmed(self._queue, booking.id)
 
         logger.info(
             "payment.charged",
