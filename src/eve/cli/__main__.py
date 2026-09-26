@@ -10,11 +10,14 @@ import getpass
 import os
 import sys
 from collections.abc import Awaitable, Callable
+from decimal import Decimal
+from uuid import UUID
 
+import httpx
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from eve.cli.commands import create_admin, seed_catalog
+from eve.cli.commands import build_payment_event, create_admin, seed_catalog, send_webhook
 from eve.core.config import get_settings
 from eve.core.db import create_engine, create_session_factory
 from eve.core.logging import configure_logging
@@ -50,12 +53,40 @@ def _create_admin(email: str) -> int:
     return 0
 
 
+def _send_webhook(args: argparse.Namespace) -> int:
+    event = build_payment_event(
+        booking_id=args.booking_id,
+        outcome=args.outcome,
+        amount=args.amount,
+        provider_reference=args.provider_reference,
+        event_id=args.event_id,
+    )
+    secret = get_settings().webhook_secret.get_secret_value()
+
+    async def deliver() -> list[httpx.Response]:
+        async with httpx.AsyncClient(timeout=10) as client:
+            return await send_webhook(client, args.url, event, secret, repeat=args.repeat)
+
+    sys.stdout.write(f"event_id={event['event_id']} type={event['type']}\n")
+    for attempt, response in enumerate(asyncio.run(deliver()), start=1):
+        sys.stdout.write(f"delivery {attempt}: HTTP {response.status_code} {response.text}\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="eve", description="EVE Diagnostics operations")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("seed", help="insert demo centres, tests and prices (idempotent)")
     admin = commands.add_parser("create-admin", help="create an admin, or promote a user")
     admin.add_argument("--email", required=True)
+    hook = commands.add_parser("send-webhook", help="act as the payment provider: send an event")
+    hook.add_argument("--booking-id", type=UUID, required=True)
+    hook.add_argument("--outcome", choices=["succeeded", "failed"], required=True)
+    hook.add_argument("--amount", type=Decimal, required=True)
+    hook.add_argument("--provider-reference", help="default: a new provider payment id")
+    hook.add_argument("--event-id", help="default: a new event id")
+    hook.add_argument("--repeat", type=int, default=1, help="deliver the same event N times")
+    hook.add_argument("--url", default="http://localhost:8000/api/v1/payments/webhook/")
     args = parser.parse_args(argv)
 
     settings = get_settings()
@@ -63,6 +94,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "seed":
         return _seed()
+    if args.command == "send-webhook":
+        return _send_webhook(args)
     return _create_admin(args.email)
 
 

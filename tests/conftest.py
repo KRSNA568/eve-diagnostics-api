@@ -22,6 +22,7 @@ from eve.core.db import create_engine
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 POSTGRES_IMAGE = "postgres:16-alpine"
 TEST_JWT_SECRET = "test-only-jwt-secret-that-is-at-least-32-bytes-long"
+TEST_WEBHOOK_SECRET = "test-only-webhook-secret-at-least-32-bytes-long"
 
 
 @pytest.fixture(scope="session")
@@ -40,6 +41,7 @@ def settings(database_url: str) -> Settings:
         environment="test",
         database_url=database_url,
         jwt_secret_key=SecretStr(TEST_JWT_SECRET),
+        webhook_secret=SecretStr(TEST_WEBHOOK_SECRET),
     )
 
 

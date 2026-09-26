@@ -128,6 +128,7 @@ def make_settings(**overrides: Any) -> Settings:
     values: dict[str, Any] = {
         "database_url": "postgresql://u:p@localhost/eve",
         "jwt_secret_key": "unit-test-secret-that-is-at-least-32-bytes",
+        "webhook_secret": "unit-test-webhook-secret-at-least-32-bytes",
     }
     return Settings(_env_file=None, **(values | overrides))
 

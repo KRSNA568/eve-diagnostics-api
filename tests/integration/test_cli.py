@@ -1,5 +1,7 @@
+import json
 from collections.abc import Iterator
 
+import httpx
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import func, select
@@ -10,6 +12,7 @@ from eve.cli.__main__ import main
 from eve.cli.commands import DEMO_CENTRES, DEMO_TESTS, create_admin, seed_catalog
 from eve.core.config import Settings, get_settings
 from eve.core.security import verify_password
+from eve.payments.webhook_signature import SIGNATURE_HEADER, verify
 from tests.factories import UserFactory
 
 
@@ -58,6 +61,7 @@ def cli_env(
     test database."""
     monkeypatch.setenv("DATABASE_URL", settings.database_url)
     monkeypatch.setenv("JWT_SECRET_KEY", settings.jwt_secret_key.get_secret_value())
+    monkeypatch.setenv("WEBHOOK_SECRET", settings.webhook_secret.get_secret_value())
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -93,3 +97,42 @@ def test_cli_create_admin_rejects_weak_passwords(
 
     assert exit_code == 2
     assert "Invalid input" in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("cli_env")
+def test_cli_send_webhook_signs_and_repeats_the_event(
+    monkeypatch: pytest.MonkeyPatch, settings: Settings, capsys: pytest.CaptureFixture[str]
+) -> None:
+    received: list[httpx.Request] = []
+
+    def provider_endpoint(request: httpx.Request) -> httpx.Response:
+        received.append(request)
+        verify(
+            request.headers[SIGNATURE_HEADER],
+            request.content,
+            settings.webhook_secret.get_secret_value(),
+            tolerance_seconds=60,
+        )
+        return httpx.Response(202 if len(received) == 1 else 200, json={"ok": True})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "eve.cli.__main__.httpx.AsyncClient",
+        lambda **kw: real_client(transport=httpx.MockTransport(provider_endpoint), **kw),
+    )
+    booking_id = "01a0dcae-0000-7000-8000-000000000000"
+
+    args = ["send-webhook", "--booking-id", booking_id, "--outcome", "failed"]
+    args += ["--amount", "349.00", "--event-id", "evt_cli_1", "--repeat", "2"]
+
+    exit_code = main(args)
+
+    assert exit_code == 0
+    assert len(received) == 2
+    assert received[0].content == received[1].content  # the same event, delivered twice
+    body = json.loads(received[0].content)
+    assert (body["event_id"], body["type"]) == ("evt_cli_1", "payment.failed")
+    assert body["data"]["booking_id"] == booking_id
+    output = capsys.readouterr().out
+    assert "delivery 1: HTTP 202" in output
+    assert "delivery 2: HTTP 200" in output

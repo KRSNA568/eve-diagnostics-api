@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     # --- Payments -------------------------------------------------------------------------
     # Approval probability for the `mock_card_random` test payment method.
     mock_payment_success_rate: float = Field(default=0.8, ge=0, le=1)
+    # Shared secret for provider webhook signatures (HMAC-SHA256), and how old a signed
+    # request may be before it is rejected as a possible replay.
+    webhook_secret: SecretStr = Field(min_length=32)
+    webhook_tolerance_seconds: int = Field(default=300, gt=0)
 
     @field_validator("database_url", "migrations_database_url")
     @classmethod

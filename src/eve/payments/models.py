@@ -1,9 +1,11 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import StrEnum
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Numeric, String, text
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Numeric, String, Text, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from eve.bookings.models import Booking
@@ -77,3 +79,37 @@ class Payment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         self.failure_reason = failure_reason if status is PaymentStatus.FAILED else None
         self.completed_at = datetime.now(UTC)
         return True
+
+
+class WebhookEventStatus(StrEnum):
+    RECEIVED = "RECEIVED"  # stored, not yet processed
+    PROCESSED = "PROCESSED"  # applied (or confirmed to be already applied)
+    IGNORED = "IGNORED"  # valid but deliberately not applied (see `outcome`)
+    FAILED = "FAILED"  # could not be applied; needs investigation or a replay
+
+
+class WebhookEvent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Durable inbox of provider events, and their audit trail.
+
+    `event_id` is the provider's own ID for the event; its UNIQUE constraint is what makes
+    redelivery of the same event a no-op.
+    """
+
+    __tablename__ = "webhook_events"
+    __table_args__ = (
+        status_check(WebhookEventStatus),
+        # Serves the sweeper that re-queues events stuck in RECEIVED.
+        Index("ix_webhook_events_status_created_at", "status", "created_at"),
+    )
+
+    event_id: Mapped[str] = mapped_column(String(100), unique=True)
+    event_type: Mapped[str] = mapped_column(String(100))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    status: Mapped[WebhookEventStatus] = mapped_column(
+        status_enum(WebhookEventStatus), default=WebhookEventStatus.RECEIVED
+    )
+    outcome: Mapped[str | None] = mapped_column(String(50))
+    attempts: Mapped[int] = mapped_column(default=0, server_default="0")
+    last_error: Mapped[str | None] = mapped_column(Text)
+    payment_id: Mapped[UUID | None] = mapped_column(ForeignKey("payments.id", ondelete="SET NULL"))
+    processed_at: Mapped[datetime | None]

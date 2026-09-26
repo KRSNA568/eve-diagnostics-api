@@ -1,17 +1,24 @@
 """Operational commands. Kept free of argparse so tests can call them directly."""
 
+import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
+from typing import Any, Literal
+from uuid import UUID
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from uuid_utils.compat import uuid7
 
 from eve.auth.models import User
 from eve.auth.repository import UserRepository
 from eve.auth.schemas import SignupRequest
 from eve.catalog.models import CentreTest, DiagnosticCentre, DiagnosticTest
 from eve.core.security import hash_password
+from eve.payments.webhook_signature import SIGNATURE_HEADER, sign
 
 # Fictional demo data: no real diagnostic chain is represented.
 DEMO_TESTS: list[tuple[str, str, str]] = [
@@ -126,3 +133,48 @@ async def create_admin(session: AsyncSession, email: str, password: str) -> tupl
         user.is_admin = True
     await session.commit()
     return user, created
+
+
+# --------------------------------------------------------------------------- mock provider
+
+
+def build_payment_event(
+    *,
+    booking_id: UUID,
+    outcome: Literal["succeeded", "failed"],
+    amount: Decimal,
+    currency: str = "INR",
+    provider_reference: str | None = None,
+    event_id: str | None = None,
+) -> dict[str, Any]:
+    """A payment event as the (simulated) provider would send it."""
+    return {
+        "event_id": event_id or f"evt_{uuid7().hex}",
+        "type": f"payment.{outcome}",
+        "created_at": datetime.now(UTC).isoformat(),
+        "data": {
+            "provider_reference": provider_reference or f"mock_pay_{uuid7().hex}",
+            "booking_id": str(booking_id),
+            "amount": str(amount),
+            "currency": currency,
+            "failure_reason": "card_declined" if outcome == "failed" else None,
+        },
+    }
+
+
+async def send_webhook(
+    client: httpx.AsyncClient,
+    url: str,
+    event: dict[str, Any],
+    secret: str,
+    *,
+    repeat: int = 1,
+) -> list[httpx.Response]:
+    """Sign and POST `event`, `repeat` times - redeliveries exercise idempotency."""
+    body = json.dumps(event, separators=(",", ":")).encode()
+    responses = []
+    for _ in range(repeat):
+        # Re-sign each delivery, as a provider retrying later would (fresh timestamp).
+        headers = {"Content-Type": "application/json", SIGNATURE_HEADER: sign(body, secret)}
+        responses.append(await client.post(url, content=body, headers=headers))
+    return responses
