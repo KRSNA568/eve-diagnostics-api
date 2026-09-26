@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import structlog
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from eve.auth.models import User
@@ -10,6 +11,7 @@ from eve.bookings.jobs import notify_booking_confirmed
 from eve.bookings.models import Booking
 from eve.bookings.repository import BookingRepository
 from eve.bookings.state import BookingStatus
+from eve.core.db import violated_constraint
 from eve.core.errors import ConflictError, NotFoundError
 from eve.core.pagination import Page, PageParams, paginate
 from eve.core.queue import TaskQueue
@@ -19,6 +21,8 @@ from eve.payments.repository import PaymentRepository
 from eve.payments.schemas import PaymentCreate, PaymentRead
 
 logger = structlog.get_logger(__name__)
+
+ONE_SUCCESS_PER_BOOKING = "uq_payments_one_success_per_booking"
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,7 +109,18 @@ class PaymentService:
             )
         )
         apply_payment_result(booking, payment, result.status, result.failure_reason)
-        await self._session.commit()
+        try:
+            await self._session.commit()
+        except IntegrityError as exc:
+            await self._session.rollback()
+            # Defence in depth: the row lock above already serialises payments, but if a
+            # second SUCCESS ever got this far the database refuses it - report that as the
+            # conflict it is, not as a server error.
+            if violated_constraint(exc) == ONE_SUCCESS_PER_BOOKING:
+                raise ConflictError(
+                    "This booking has already been paid", code="BOOKING_NOT_PAYABLE"
+                ) from exc
+            raise
         if result.status is PaymentStatus.SUCCESS:  # the booking was just confirmed
             await notify_booking_confirmed(self._queue, booking.id)
 

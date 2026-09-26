@@ -346,3 +346,22 @@ async def test_users_only_see_their_own_payments(
     assert peek.status_code == 404
     assert own.status_code == 200
     assert admin_list.json()["total"] == 2
+
+
+async def test_database_backstop_reports_a_second_success_as_a_conflict(
+    client: AsyncClient,
+    db_session: AsyncSession,
+    offering: Offering,
+    user: User,
+    auth_headers: AuthHeaders,
+) -> None:
+    """If a second successful charge ever got past the row lock, the unique index refuses
+    it and the API answers 409 - never a 500."""
+    booking = await book(offering, user)  # still PENDING...
+    await PaymentFactory.create_async(booking_id=booking.id, status=PaymentStatus.SUCCESS)
+
+    response = await client.post(PAYMENTS, json=pay_body(booking), headers=auth_headers(user))
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "BOOKING_NOT_PAYABLE"
+    assert await payment_count(db_session, booking) == 1
