@@ -1,8 +1,11 @@
 -- One-time Supabase hardening, run as the `postgres` role.
 --
 --   Supabase SQL editor (it connects as `postgres`), or:
---   psql "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres" \
---        -f scripts/harden_supabase.sql
+--   psql -v ON_ERROR_STOP=1 -f scripts/harden_supabase.sql \
+--        "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres"
+--
+-- ON_ERROR_STOP matters: without it psql exits 0 even when the verification below raises and
+-- the whole block rolls back, so anything wrapping this would read a failure as a success.
 --
 -- NOT an Alembic migration, deliberately. A Supabase project ships an `ensure_rls` event
 -- trigger backed by `public.rls_auto_enable()`, a SECURITY DEFINER function owned by
@@ -53,13 +56,24 @@ BEGIN
     END LOOP;
 
     -- Re-read the ACL rather than trust the statements above.
-    SELECT string_agg(
-               CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END, ', ')
+    SELECT CASE
+               -- A null ACL means default privileges, which for a function include EXECUTE
+               -- to PUBLIC, and aclexplode() is STRICT so it would report nothing at all.
+               -- The REVOKE above always materialises the ACL, so this cannot be reached
+               -- today; the check should not silently depend on that ordering.
+               WHEN p.proacl IS NULL THEN 'PUBLIC (default privileges - ACL was reset)'
+               ELSE (
+                   SELECT string_agg(
+                              CASE WHEN a.grantee = 0
+                                   THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END, ', ')
+                     FROM aclexplode(p.proacl) a
+                    WHERE a.privilege_type = 'EXECUTE'
+                      AND (a.grantee = 0 OR pg_get_userbyid(a.grantee) <> fn_owner)
+               )
+           END
       INTO survivors
-      FROM pg_proc p, aclexplode(p.proacl) a
-     WHERE p.oid = fn
-       AND a.privilege_type = 'EXECUTE'
-       AND (a.grantee = 0 OR pg_get_userbyid(a.grantee) <> fn_owner);
+      FROM pg_proc p
+     WHERE p.oid = fn;
 
     IF survivors IS NOT NULL THEN
         RAISE EXCEPTION 'EXECUTE on % is still granted to: %', fn, survivors;

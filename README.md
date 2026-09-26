@@ -81,16 +81,27 @@ set `TEST_DATABASE_URL` / `TEST_REDIS_URL` (CI does this with service containers
 
 ### Running on Supabase
 
-Set in `.env`:
+First create the role the application runs as. In the Supabase SQL editor, which connects
+as `postgres`:
+
+```sql
+create role eve_app login password '<password>';
+grant usage, create on schema public to eve_app;
+```
+
+`eve_app` is a plain login role - no superuser, no `CREATEROLE`, no `BYPASSRLS`, no
+membership of `anon`, `authenticated` or `service_role`. It owns the tables it creates and
+nothing else, which is what makes the RLS posture below hold. Then set in `.env`, using the
+pooler's `<role>.<ref>` username form:
 
 ```bash
-DATABASE_URL=postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres?sslmode=require
-MIGRATIONS_DATABASE_URL=postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require
+DATABASE_URL=postgresql://eve_app.<ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres?sslmode=require
+MIGRATIONS_DATABASE_URL=postgresql://eve_app.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require
 ```
 
 For the compose stack, put the same values in `DOCKER_DATABASE_URL` /
 `DOCKER_MIGRATIONS_DATABASE_URL` and remove `COMPOSE_PROFILES=local-db`. Four Supabase
-specifics are handled in code:
+specifics are accounted for:
 
 - **Pooler-safe driver settings.** The app uses the Supavisor transaction pooler (port 6543),
   which cannot hold server-side prepared statements, so psycopg runs with
