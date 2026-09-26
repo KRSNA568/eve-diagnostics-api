@@ -34,6 +34,8 @@ class Settings(BaseSettings):
 
     # --- Redis (job queue, cache, rate limits) -------------------------------------------
     redis_url: str = Field(default="redis://localhost:6379/0", repr=False)
+    # Catalog reads are cached this long at most; writes invalidate immediately.
+    catalog_cache_ttl_seconds: int = Field(default=300, gt=0)
 
     # --- Auth -----------------------------------------------------------------------------
     # Generate with: python -c "import secrets; print(secrets.token_urlsafe(64))"

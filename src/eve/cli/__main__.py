@@ -15,9 +15,17 @@ from uuid import UUID
 
 import httpx
 from pydantic import ValidationError
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from eve.cli.commands import build_payment_event, create_admin, seed_catalog, send_webhook
+from eve.cli.commands import (
+    SeedResult,
+    build_payment_event,
+    create_admin,
+    seed_catalog,
+    send_webhook,
+)
+from eve.core.cache import VersionedCache
 from eve.core.config import get_settings
 from eve.core.db import create_engine, create_session_factory
 from eve.core.logging import configure_logging
@@ -33,7 +41,16 @@ async def _run[T](command: Callable[[AsyncSession], Awaitable[T]]) -> T:
 
 
 def _seed() -> int:
-    result = asyncio.run(_run(seed_catalog))
+    async def seed_and_invalidate(session: AsyncSession) -> SeedResult:
+        result = await seed_catalog(session)
+        redis = Redis.from_url(get_settings().redis_url)
+        try:
+            await VersionedCache(redis, namespace="catalog", ttl_seconds=1).invalidate()
+        finally:
+            await redis.aclose()
+        return result
+
+    result = asyncio.run(_run(seed_and_invalidate))
     sys.stdout.write(
         f"Seeded catalog: {result.tests} tests, {result.centres} centres, "
         f"{result.offerings} offerings (existing rows untouched).\n"

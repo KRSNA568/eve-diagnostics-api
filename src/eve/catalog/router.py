@@ -1,9 +1,9 @@
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 
-from eve.api.deps import SessionDep
+from eve.api.deps import RedisDep, SessionDep, SettingsDep
 from eve.auth.dependencies import require_admin
 from eve.catalog.schemas import (
     CentreCreate,
@@ -18,12 +18,24 @@ from eve.catalog.schemas import (
     OfferingUpdate,
 )
 from eve.catalog.service import CatalogService
+from eve.core.cache import Cached, VersionedCache
 from eve.core.errors import ErrorResponse
 from eve.core.pagination import Page, PageParamsDep
 
 
-def get_catalog_service(session: SessionDep) -> CatalogService:
-    return CatalogService(session)
+def get_catalog_service(
+    session: SessionDep, redis: RedisDep, settings: SettingsDep
+) -> CatalogService:
+    cache = VersionedCache(
+        redis, namespace="catalog", ttl_seconds=settings.catalog_cache_ttl_seconds
+    )
+    return CatalogService(session, cache)
+
+
+def _served[T](cached: Cached[T], response: Response) -> T:
+    """Expose whether the response came from the cache (HIT / MISS / BYPASS)."""
+    response.headers["X-Cache"] = cached.status
+    return cached.value
 
 
 CatalogServiceDep = Annotated[CatalogService, Depends(get_catalog_service)]
@@ -46,19 +58,22 @@ tests_router = APIRouter(prefix="/tests", tags=["catalog"])
 @centres_router.get("/", summary="List diagnostic centres")
 async def list_centres(
     service: CatalogServiceDep,
+    response: Response,
     params: PageParamsDep,
     city: Annotated[str | None, Query(max_length=100, description="Exact city, any case")] = None,
     test_id: Annotated[UUID | None, Query(description="Only centres offering this test")] = None,
     q: Annotated[str | None, Query(min_length=1, max_length=100, description="Name search")] = None,
 ) -> Page[CentreRead]:
-    return await service.list_centres(params, city=city, test_id=test_id, q=q)
+    return _served(await service.list_centres(params, city=city, test_id=test_id, q=q), response)
 
 
 @centres_router.get(
     "/{centre_id}/", summary="Centre with its tests and prices", responses=_NOT_FOUND
 )
-async def get_centre(centre_id: UUID, service: CatalogServiceDep) -> CentreDetail:
-    return await service.get_centre_detail(centre_id)
+async def get_centre(
+    centre_id: UUID, service: CatalogServiceDep, response: Response
+) -> CentreDetail:
+    return _served(await service.get_centre_detail(centre_id), response)
 
 
 @centres_router.post(
@@ -126,17 +141,20 @@ async def update_offering(
 @tests_router.get("/", summary="List diagnostic tests")
 async def list_tests(
     service: CatalogServiceDep,
+    response: Response,
     params: PageParamsDep,
     q: Annotated[
         str | None, Query(min_length=1, max_length=100, description="Name/code search")
     ] = None,
 ) -> Page[DiagnosticTestRead]:
-    return await service.list_tests(params, q=q)
+    return _served(await service.list_tests(params, q=q), response)
 
 
 @tests_router.get("/{test_id}/", summary="Get a diagnostic test", responses=_NOT_FOUND)
-async def get_test(test_id: UUID, service: CatalogServiceDep) -> DiagnosticTestRead:
-    return await service.get_test(test_id)
+async def get_test(
+    test_id: UUID, service: CatalogServiceDep, response: Response
+) -> DiagnosticTestRead:
+    return _served(await service.get_test(test_id), response)
 
 
 @tests_router.post(

@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import httpx
@@ -121,3 +122,18 @@ def test_cli_send_webhook_signs_and_repeats_the_event(
     output = capsys.readouterr().out
     assert "delivery 1: HTTP 202" in output
     assert "delivery 2: HTTP 200" in output
+
+
+@pytest.mark.usefixtures("app_env")
+async def test_cli_seed_invalidates_the_catalog_cache(settings: Settings) -> None:
+    from arq.connections import ArqRedis
+
+    redis = ArqRedis.from_url(settings.redis_url)
+    try:
+        before = int(await redis.get("catalog:version") or 0)
+        await asyncio.to_thread(main, ["seed"])
+        after = int(await redis.get("catalog:version") or 0)
+    finally:
+        await redis.aclose()
+
+    assert after == before + 1

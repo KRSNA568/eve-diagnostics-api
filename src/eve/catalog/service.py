@@ -1,6 +1,8 @@
+from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 import structlog
+from pydantic import TypeAdapter
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +20,7 @@ from eve.catalog.schemas import (
     OfferingRead,
     OfferingUpdate,
 )
+from eve.core.cache import Cached, VersionedCache
 from eve.core.db import violated_constraint
 from eve.core.errors import ConflictError, NotFoundError, UnprocessableError
 from eve.core.pagination import Page, PageParams, paginate
@@ -27,13 +30,19 @@ logger = structlog.get_logger(__name__)
 TEST_CODE_UNIQUE = "uq_diagnostic_tests_code"
 OFFERING_UNIQUE = "uq_centre_tests_centre_id_test_id"
 
+_CENTRE_PAGE = TypeAdapter(Page[CentreRead])
+_CENTRE_DETAIL = TypeAdapter(CentreDetail)
+_TEST_PAGE = TypeAdapter(Page[DiagnosticTestRead])
+_TEST = TypeAdapter(DiagnosticTestRead)
+
 
 class CatalogService:
-    """Catalog use cases. Reads are public views (active items only); writes are admin-only
-    and enforced at the router."""
+    """Catalog use cases. Reads are public views (active items only) served through the
+    cache; writes are admin-only (enforced at the router) and invalidate the cache."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, cache: VersionedCache | None = None) -> None:
         self._session = session
+        self._cache = cache
         self._repo = CatalogRepository(session)
 
     # ---------------------------------------------------------------- centres
@@ -45,6 +54,22 @@ class CatalogService:
         city: str | None = None,
         test_id: UUID | None = None,
         q: str | None = None,
+    ) -> Cached[Page[CentreRead]]:
+        # City and name filters are case-insensitive, so normalise them in the cache key.
+        key = (
+            "centres",
+            params.page,
+            params.size,
+            (city or "").lower(),
+            test_id,
+            (q or "").lower(),
+        )
+        return await self._read(
+            key, _CENTRE_PAGE, lambda: self._load_centres(params, city, test_id, q)
+        )
+
+    async def _load_centres(
+        self, params: PageParams, city: str | None, test_id: UUID | None, q: str | None
     ) -> Page[CentreRead]:
         stmt = self._repo.active_centres_query(city=city, test_id=test_id, q=q)
         centres, total = await paginate(self._session, stmt, params)
@@ -52,7 +77,12 @@ class CatalogService:
             [CentreRead.model_validate(c) for c in centres], total, params
         )
 
-    async def get_centre_detail(self, centre_id: UUID) -> CentreDetail:
+    async def get_centre_detail(self, centre_id: UUID) -> Cached[CentreDetail]:
+        return await self._read(
+            ("centre", centre_id), _CENTRE_DETAIL, lambda: self._load_centre_detail(centre_id)
+        )
+
+    async def _load_centre_detail(self, centre_id: UUID) -> CentreDetail:
         centre = await self._repo.get_centre(centre_id)
         if centre is None or not centre.is_active:
             raise NotFoundError("Diagnostic centre not found", code="CENTRE_NOT_FOUND")
@@ -65,7 +95,7 @@ class CatalogService:
     async def create_centre(self, data: CentreCreate) -> CentreRead:
         centre = DiagnosticCentre(**data.model_dump())
         self._repo.add(centre)
-        await self._session.commit()
+        await self._commit()
         logger.info("catalog.centre_created", centre_id=str(centre.id))
         return CentreRead.model_validate(centre)
 
@@ -73,7 +103,7 @@ class CatalogService:
         centre = await self._require_centre(centre_id)
         for field, value in data.changes().items():
             setattr(centre, field, value)
-        await self._session.commit()
+        await self._commit()
         logger.info(
             "catalog.centre_updated", centre_id=str(centre_id), fields=sorted(data.changes())
         )
@@ -82,20 +112,27 @@ class CatalogService:
     async def deactivate_centre(self, centre_id: UUID) -> None:
         centre = await self._require_centre(centre_id)
         centre.is_active = False
-        await self._session.commit()
+        await self._commit()
         logger.info("catalog.centre_deactivated", centre_id=str(centre_id))
 
     # ---------------------------------------------------------------- tests
 
     async def list_tests(
         self, params: PageParams, *, q: str | None = None
-    ) -> Page[DiagnosticTestRead]:
+    ) -> Cached[Page[DiagnosticTestRead]]:
+        key = ("tests", params.page, params.size, (q or "").lower())
+        return await self._read(key, _TEST_PAGE, lambda: self._load_tests(params, q))
+
+    async def _load_tests(self, params: PageParams, q: str | None) -> Page[DiagnosticTestRead]:
         tests, total = await paginate(self._session, self._repo.active_tests_query(q=q), params)
         return Page[DiagnosticTestRead].build(
             [DiagnosticTestRead.model_validate(t) for t in tests], total, params
         )
 
-    async def get_test(self, test_id: UUID) -> DiagnosticTestRead:
+    async def get_test(self, test_id: UUID) -> Cached[DiagnosticTestRead]:
+        return await self._read(("test", test_id), _TEST, lambda: self._load_test(test_id))
+
+    async def _load_test(self, test_id: UUID) -> DiagnosticTestRead:
         test = await self._repo.get_test(test_id)
         if test is None or not test.is_active:
             raise NotFoundError("Diagnostic test not found", code="TEST_NOT_FOUND")
@@ -116,7 +153,7 @@ class CatalogService:
             raise NotFoundError("Diagnostic test not found", code="TEST_NOT_FOUND")
         for field, value in data.changes().items():
             setattr(test, field, value)
-        await self._session.commit()
+        await self._commit()
         return DiagnosticTestRead.model_validate(test)
 
     # ---------------------------------------------------------------- offerings
@@ -147,12 +184,25 @@ class CatalogService:
             raise NotFoundError("This centre does not offer that test", code="OFFERING_NOT_FOUND")
         for field, value in data.changes().items():
             setattr(offering, field, value)
-        await self._session.commit()
+        await self._commit()
         # Existing bookings are unaffected: they store the price they were booked at.
         logger.info("catalog.offering_updated", centre_id=str(centre_id), test_id=str(test_id))
         return OfferingRead.model_validate(offering)
 
     # ---------------------------------------------------------------- helpers
+
+    async def _read[T](
+        self, key: tuple[object, ...], adapter: TypeAdapter[T], load: Callable[[], Awaitable[T]]
+    ) -> Cached[T]:
+        if self._cache is None:
+            return Cached(await load(), "BYPASS")
+        return await self._cache.get_or_load(key, adapter, load)
+
+    async def _commit(self) -> None:
+        """Commit a catalog write, then invalidate every cached catalog read."""
+        await self._session.commit()
+        if self._cache is not None:
+            await self._cache.invalidate()
 
     async def _require_centre(self, centre_id: UUID) -> DiagnosticCentre:
         centre = await self._repo.get_centre(centre_id)
@@ -163,7 +213,7 @@ class CatalogService:
     async def _commit_or_conflict(self, constraint: str, message: str, code: str) -> None:
         """Commit, translating a violation of `constraint` into a 409 (race-safe)."""
         try:
-            await self._session.commit()
+            await self._commit()
         except IntegrityError as exc:
             await self._session.rollback()
             if violated_constraint(exc) == constraint:
