@@ -6,6 +6,7 @@ import structlog
 from arq.connections import ArqRedis
 from fastapi import FastAPI
 
+from eve.api.rate_limit import create_rate_limiter
 from eve.api.v1 import api_router
 from eve.core.config import Settings, get_settings
 from eve.core.db import create_engine, create_session_factory
@@ -32,6 +33,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.session_factory = create_session_factory(engine)
         app.state.redis = redis
         app.state.task_queue = ArqTaskQueue(redis)
+        app.state.rate_limiter = create_rate_limiter(redis)
         logger.info("app.startup", environment=settings.environment)
         try:
             yield

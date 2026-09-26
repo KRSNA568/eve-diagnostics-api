@@ -1,6 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
+from limits import parse as parse_rate_limit
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -45,6 +46,18 @@ class Settings(BaseSettings):
     jwt_audience: str = "eve-api"
     access_token_ttl_minutes: int = Field(default=15, gt=0)
     refresh_token_ttl_days: int = Field(default=7, gt=0)
+
+    # --- Rate limits ("<count>/<second|minute|hour|day>") -----------------------------------
+    rate_limit_enabled: bool = True
+    rate_limit_signup: str = "5/minute"  # per client IP
+    rate_limit_login: str = "5/minute"  # per client IP: slows password guessing
+    rate_limit_payments: str = "10/minute"  # per user
+
+    @field_validator("rate_limit_signup", "rate_limit_login", "rate_limit_payments")
+    @classmethod
+    def _valid_rate_limit(cls, value: str) -> str:
+        parse_rate_limit(value)  # raises ValueError on a malformed limit: fail at startup
+        return value
 
     # --- Bookings -------------------------------------------------------------------------
     booking_min_lead_minutes: int = Field(default=30, ge=0)

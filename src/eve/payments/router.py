@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from uuid_utils.compat import uuid7
 
 from eve.api.deps import SessionDep, SettingsDep, TaskQueueDep
+from eve.api.rate_limit import limit_by_user
 from eve.auth.dependencies import CurrentUser, require_admin
 from eve.core.errors import ErrorResponse
 from eve.core.pagination import Page, PageParamsDep
@@ -78,6 +79,7 @@ router = APIRouter(prefix="/payments", tags=["payments"])
     "/",
     status_code=status.HTTP_201_CREATED,
     summary="Pay for a booking (simulated gateway)",
+    dependencies=[Depends(limit_by_user("rate_limit_payments", scope="payments.create"))],
     response_description="The payment; `status` is SUCCESS or FAILED and the booking follows.",
     responses=_ERRORS
     | {
@@ -86,6 +88,7 @@ router = APIRouter(prefix="/payments", tags=["payments"])
             "description": "Replay of an earlier request with the same Idempotency-Key",
         },
         status.HTTP_409_CONFLICT: {"model": ErrorResponse},
+        status.HTTP_429_TOO_MANY_REQUESTS: {"model": ErrorResponse},
     },
 )
 async def create_payment(

@@ -10,6 +10,10 @@ from uuid_utils.compat import uuid7
 from eve.core.errors import error_response
 
 REQUEST_ID_HEADER = "X-Request-ID"
+# Dependencies may put headers here (request.state.extra_response_headers) to have them
+# added to whatever response is finally sent - including error responses built by
+# exception handlers, which headers set on FastAPI's injected Response never reach.
+EXTRA_HEADERS_STATE = "extra_response_headers"
 
 # Accept a caller-supplied request ID only if it is short and log-safe (no spaces or
 # newlines that could forge log lines); otherwise mint our own.
@@ -59,7 +63,11 @@ class RequestContextMiddleware:
             if message["type"] == "http.response.start":
                 response_started = True
                 status_code = message["status"]
-                MutableHeaders(scope=message).append(REQUEST_ID_HEADER, request_id)
+                headers = MutableHeaders(scope=message)
+                headers.append(REQUEST_ID_HEADER, request_id)
+                for name, value in scope["state"].get(EXTRA_HEADERS_STATE, {}).items():
+                    if name not in headers:
+                        headers.append(name, value)
             await send(message)
 
         try:
