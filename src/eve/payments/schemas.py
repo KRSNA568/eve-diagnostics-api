@@ -8,7 +8,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from eve.bookings.state import BookingStatus
 from eve.payments.gateway import MockPaymentMethod
-from eve.payments.models import PaymentStatus
+from eve.payments.models import PaymentStatus, WebhookEventStatus
 
 
 class PaymentCreate(BaseModel):
@@ -87,3 +87,20 @@ class WebhookPaymentData(BaseModel):
 class WebhookAck(BaseModel):
     status: Literal["accepted", "duplicate"]
     event_id: str
+
+
+class WebhookEventRead(BaseModel):
+    """Operator view of the inbox; FAILED events are the dead-letter queue."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    event_id: str
+    event_type: str
+    status: WebhookEventStatus
+    outcome: str | None
+    attempts: int
+    last_error: str | None
+    payment_id: UUID | None
+    created_at: datetime
+    processed_at: datetime | None

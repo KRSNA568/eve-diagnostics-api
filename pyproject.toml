@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "alembic>=1.20.0",
+    "arq>=0.28.0",
     "email-validator>=2.3.0",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
@@ -107,7 +108,12 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 # Deprecations surface as failures now, not as surprises during an upgrade.
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # arq 0.28's Worker.close() still calls redis-py's deprecated close(); scoped to arq so
+    # the same deprecation in our own code would still fail the build.
+    "ignore:Call to deprecated close:DeprecationWarning:arq.worker",
+]
 
 [tool.coverage.run]
 source = ["eve"]

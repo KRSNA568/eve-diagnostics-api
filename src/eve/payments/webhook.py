@@ -25,10 +25,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from eve.bookings.models import Booking
 from eve.bookings.repository import BookingRepository
 from eve.bookings.state import BookingStatus
+from eve.core.errors import ConflictError, NotFoundError
+from eve.core.pagination import Page, PageParams, paginate
 from eve.payments.gateway import MockPaymentGateway
 from eve.payments.models import Payment, PaymentStatus, WebhookEvent, WebhookEventStatus
 from eve.payments.repository import PaymentRepository, WebhookEventRepository
-from eve.payments.schemas import WebhookAck, WebhookEventIn, WebhookEventType, WebhookPaymentData
+from eve.payments.schemas import (
+    WebhookAck,
+    WebhookEventIn,
+    WebhookEventRead,
+    WebhookEventType,
+    WebhookPaymentData,
+)
 from eve.payments.service import apply_payment_result
 
 logger = structlog.get_logger(__name__)
@@ -122,6 +130,48 @@ class WebhookService:
         )
         getattr(log, level)("webhook.processed", status=result.status, outcome=result.outcome)
         return event.status
+
+    async def dead_letter(self, event_pk: UUID, *, error: str, attempts: int) -> None:
+        """Give up on an event after repeated unexpected failures: mark it FAILED with the
+        last error so an operator can inspect and replay it."""
+        event = await self._events.get_for_update(event_pk)
+        if event is None or event.status in (
+            WebhookEventStatus.PROCESSED,
+            WebhookEventStatus.IGNORED,
+        ):
+            await self._session.rollback()
+            return
+        event.status = WebhookEventStatus.FAILED
+        event.last_error = error[:2000]
+        event.attempts = max(event.attempts, attempts)
+        await self._session.commit()
+
+    async def reset_for_replay(self, event_pk: UUID) -> WebhookEventRead:
+        """Make a FAILED (or stuck RECEIVED) event eligible for processing again."""
+        event = await self._events.get_for_update(event_pk)
+        if event is None:
+            raise NotFoundError("Webhook event not found", code="WEBHOOK_EVENT_NOT_FOUND")
+        if event.status in (WebhookEventStatus.PROCESSED, WebhookEventStatus.IGNORED):
+            raise ConflictError(
+                "This event was already processed",
+                code="EVENT_ALREADY_PROCESSED",
+                details={"status": event.status.value},
+            )
+        event.status = WebhookEventStatus.RECEIVED
+        event.last_error = None
+        await self._session.commit()
+        logger.info("webhook.replay_requested", event_id=event.event_id)
+        return WebhookEventRead.model_validate(event)
+
+    async def list_events(
+        self, params: PageParams, *, status: WebhookEventStatus | None = None
+    ) -> Page[WebhookEventRead]:
+        events, total = await paginate(
+            self._session, self._events.list_query(status=status), params
+        )
+        return Page[WebhookEventRead].build(
+            [WebhookEventRead.model_validate(e) for e in events], total, params
+        )
 
     async def _apply(self, event: WebhookEvent) -> _Result:
         try:

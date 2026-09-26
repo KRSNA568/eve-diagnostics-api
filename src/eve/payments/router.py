@@ -3,14 +3,23 @@ from typing import Annotated, Any
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, Header, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
+from uuid_utils.compat import uuid7
 
-from eve.api.deps import SessionDep, SettingsDep
-from eve.auth.dependencies import CurrentUser
+from eve.api.deps import SessionDep, SettingsDep, TaskQueueDep
+from eve.auth.dependencies import CurrentUser, require_admin
 from eve.core.errors import ErrorResponse
 from eve.core.pagination import Page, PageParamsDep
 from eve.payments.gateway import MockPaymentGateway, PaymentGateway
-from eve.payments.schemas import PaymentCreate, PaymentRead, WebhookAck, WebhookEventIn
+from eve.payments.jobs import PROCESS_WEBHOOK_JOB, webhook_job_id
+from eve.payments.models import WebhookEventStatus
+from eve.payments.schemas import (
+    PaymentCreate,
+    PaymentRead,
+    WebhookAck,
+    WebhookEventIn,
+    WebhookEventRead,
+)
 from eve.payments.service import PaymentService
 from eve.payments.webhook import WebhookService
 from eve.payments.webhook_signature import SIGNATURE_HEADER, verify
@@ -115,19 +124,55 @@ async def create_payment(
     },
 )
 async def receive_webhook(
-    event: WebhookEventIn, request: Request, response: Response, service: WebhookServiceDep
+    event: WebhookEventIn,
+    request: Request,
+    response: Response,
+    service: WebhookServiceDep,
+    queue: TaskQueueDep,
 ) -> WebhookAck:
     ack, event_pk = await service.receive(event, json.loads(await request.body()))
     if event_pk is None:
         response.status_code = status.HTTP_200_OK
         return ack
     try:
-        await service.process(event_pk)
+        await queue.enqueue(PROCESS_WEBHOOK_JOB, str(event_pk), job_id=webhook_job_id(event_pk))
     except Exception:
-        # The event is stored durably; failing the request would only make the provider
-        # resend something we already have. Processing is retried from the inbox.
-        logger.exception("webhook.processing_failed", event_id=event.event_id)
+        # The event is already stored durably, so acknowledge anyway: failing the request
+        # would only make the provider resend it. It stays RECEIVED until it is processed.
+        logger.exception("webhook.enqueue_failed", event_id=event.event_id)
     return ack
+
+
+@router.get(
+    "/webhook/events/",
+    dependencies=[Depends(require_admin)],
+    summary="Inspect received provider events (admin); status=FAILED is the dead-letter queue",
+    responses=_ERRORS,
+)
+async def list_webhook_events(
+    service: WebhookServiceDep,
+    params: PageParamsDep,
+    status_filter: Annotated[WebhookEventStatus | None, Query(alias="status")] = None,
+) -> Page[WebhookEventRead]:
+    return await service.list_events(params, status=status_filter)
+
+
+@router.post(
+    "/webhook/events/{event_pk}/replay/",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_admin)],
+    summary="Re-process a failed provider event (admin)",
+    responses=_ERRORS | {status.HTTP_409_CONFLICT: {"model": ErrorResponse}},
+)
+async def replay_webhook_event(
+    event_pk: UUID, service: WebhookServiceDep, queue: TaskQueueDep
+) -> WebhookEventRead:
+    event = await service.reset_for_replay(event_pk)
+    # A fresh job id: the original job's result may still be kept under the old one.
+    await queue.enqueue(
+        PROCESS_WEBHOOK_JOB, str(event_pk), job_id=f"webhook:{event_pk}:replay:{uuid7().hex}"
+    )
+    return event
 
 
 @router.get("/", summary="Your payments, newest first (admins see all)", responses=_ERRORS)

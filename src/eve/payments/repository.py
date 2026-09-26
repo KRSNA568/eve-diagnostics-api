@@ -81,6 +81,12 @@ class WebhookEventRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    def list_query(self, *, status: WebhookEventStatus | None) -> Select[WebhookEvent]:
+        stmt = select(WebhookEvent)
+        if status is not None:
+            stmt = stmt.where(WebhookEvent.status == status)
+        return stmt.order_by(WebhookEvent.created_at.desc(), WebhookEvent.id.desc())
+
     async def get_for_update(self, event_pk: UUID) -> WebhookEvent | None:
         stmt = select(WebhookEvent).where(WebhookEvent.id == event_pk).with_for_update()
         return (await self._session.execute(stmt)).scalar_one_or_none()

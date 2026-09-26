@@ -1,5 +1,4 @@
 import json
-from collections.abc import Iterator
 
 import httpx
 import pytest
@@ -10,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from eve.catalog.models import CentreTest, DiagnosticCentre, DiagnosticTest
 from eve.cli.__main__ import main
 from eve.cli.commands import DEMO_CENTRES, DEMO_TESTS, create_admin, seed_catalog
-from eve.core.config import Settings, get_settings
+from eve.core.config import Settings
 from eve.core.security import verify_password
 from eve.payments.webhook_signature import SIGNATURE_HEADER, verify
 from tests.factories import UserFactory
@@ -53,21 +52,7 @@ async def test_create_admin_applies_the_password_policy(db_session: AsyncSession
         await create_admin(db_session, "ops@example.com", "weak")
 
 
-@pytest.fixture
-def cli_env(
-    monkeypatch: pytest.MonkeyPatch, settings: Settings, migrated_database: None
-) -> Iterator[None]:
-    """Point the real CLI entry point (which reads settings from the environment) at the
-    test database."""
-    monkeypatch.setenv("DATABASE_URL", settings.database_url)
-    monkeypatch.setenv("JWT_SECRET_KEY", settings.jwt_secret_key.get_secret_value())
-    monkeypatch.setenv("WEBHOOK_SECRET", settings.webhook_secret.get_secret_value())
-    get_settings.cache_clear()
-    yield
-    get_settings.cache_clear()
-
-
-@pytest.mark.usefixtures("cli_env")
+@pytest.mark.usefixtures("app_env")
 def test_cli_seed_command(capsys: pytest.CaptureFixture[str]) -> None:
     exit_code = main(["seed"])
 
@@ -75,7 +60,7 @@ def test_cli_seed_command(capsys: pytest.CaptureFixture[str]) -> None:
     assert "Seeded catalog: 6 tests, 4 centres" in capsys.readouterr().out
 
 
-@pytest.mark.usefixtures("cli_env")
+@pytest.mark.usefixtures("app_env")
 def test_cli_create_admin_reads_password_from_environment(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -87,7 +72,7 @@ def test_cli_create_admin_reads_password_from_environment(
     assert "Created admin: ops@example.com" in capsys.readouterr().out
 
 
-@pytest.mark.usefixtures("cli_env")
+@pytest.mark.usefixtures("app_env")
 def test_cli_create_admin_rejects_weak_passwords(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -99,7 +84,7 @@ def test_cli_create_admin_rejects_weak_passwords(
     assert "Invalid input" in capsys.readouterr().err
 
 
-@pytest.mark.usefixtures("cli_env")
+@pytest.mark.usefixtures("app_env")
 def test_cli_send_webhook_signs_and_repeats_the_event(
     monkeypatch: pytest.MonkeyPatch, settings: Settings, capsys: pytest.CaptureFixture[str]
 ) -> None:

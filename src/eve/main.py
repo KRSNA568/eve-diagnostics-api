@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from importlib.metadata import version
 
 import structlog
+from arq.connections import ArqRedis
 from fastapi import FastAPI
 
 from eve.api.v1 import api_router
@@ -11,6 +12,7 @@ from eve.core.db import create_engine, create_session_factory
 from eve.core.errors import register_exception_handlers
 from eve.core.logging import configure_logging
 from eve.core.middleware import RequestContextMiddleware
+from eve.core.queue import ArqTaskQueue
 
 logger = structlog.get_logger(__name__)
 
@@ -23,13 +25,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         engine = create_engine(settings)
+        # Connects lazily: the API still starts (and stays useful) if Redis is briefly down.
+        redis = ArqRedis.from_url(settings.redis_url)
         app.state.settings = settings
         app.state.engine = engine
         app.state.session_factory = create_session_factory(engine)
+        app.state.redis = redis
+        app.state.task_queue = ArqTaskQueue(redis)
         logger.info("app.startup", environment=settings.environment)
         try:
             yield
         finally:
+            await redis.aclose()
             await engine.dispose()
             logger.info("app.shutdown")
 

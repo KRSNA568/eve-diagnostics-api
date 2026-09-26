@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     # Supavisor in transaction mode (port 6543) cannot use server-side prepared statements.
     db_disable_prepared_statements: bool = True
 
+    # --- Redis (job queue, cache, rate limits) -------------------------------------------
+    redis_url: str = Field(default="redis://localhost:6379/0", repr=False)
+
     # --- Auth -----------------------------------------------------------------------------
     # Generate with: python -c "import secrets; print(secrets.token_urlsafe(64))"
     jwt_secret_key: SecretStr = Field(min_length=32)
@@ -52,6 +55,11 @@ class Settings(BaseSettings):
     # request may be before it is rejected as a possible replay.
     webhook_secret: SecretStr = Field(min_length=32)
     webhook_tolerance_seconds: int = Field(default=300, gt=0)
+    # Background processing: attempts before an event is dead-lettered (status FAILED), and
+    # exponential backoff between attempts: base * 2^(attempt-1), capped, plus jitter.
+    webhook_max_attempts: int = Field(default=5, ge=1)
+    webhook_retry_base_seconds: float = Field(default=2.0, gt=0)
+    webhook_retry_max_seconds: float = Field(default=300.0, gt=0)
 
     @field_validator("database_url", "migrations_database_url")
     @classmethod

@@ -70,12 +70,13 @@ def configure_logging(*, level: str = "INFO", fmt: LogFormat = "json") -> None:
     root.addHandler(handler)
     root.setLevel(level.upper())
 
-    # Route uvicorn's own logs through our formatter; drop its access log because the
+    # Route uvicorn's and arq's own logs through our formatter (both CLIs install their own
+    # handlers, which would print every line twice); drop uvicorn's access log because the
     # request middleware emits a richer `http.request` event.
-    for name in ("uvicorn", "uvicorn.error"):
-        uvicorn_logger = logging.getLogger(name)
-        uvicorn_logger.handlers.clear()
-        uvicorn_logger.propagate = True
+    for name in ("uvicorn", "uvicorn.error", "arq"):
+        framework_logger = logging.getLogger(name)
+        framework_logger.handlers.clear()
+        framework_logger.propagate = True
     access_logger = logging.getLogger("uvicorn.access")
     access_logger.handlers.clear()
     access_logger.propagate = False

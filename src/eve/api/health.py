@@ -6,7 +6,7 @@ from fastapi import APIRouter, Response, status
 from pydantic import BaseModel
 from sqlalchemy import text
 
-from eve.api.deps import SessionDep
+from eve.api.deps import RedisDep, SessionDep
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -44,9 +44,12 @@ async def live() -> HealthStatus:
     summary="Readiness probe",
     responses={status.HTTP_503_SERVICE_UNAVAILABLE: {"model": ReadinessStatus}},
 )
-async def ready(session: SessionDep, response: Response) -> ReadinessStatus:
+async def ready(session: SessionDep, redis: RedisDep, response: Response) -> ReadinessStatus:
     """The service can handle traffic: every backing dependency answers."""
-    checks = {"database": await _probe(session.execute(text("SELECT 1")))}
+    checks = {
+        "database": await _probe(session.execute(text("SELECT 1"))),
+        "redis": await _probe(redis.ping()),
+    }
 
     healthy = all(result == "ok" for result in checks.values())
     if not healthy:

@@ -1,15 +1,27 @@
+"""Webhook receipt and processing rules.
+
+Jobs run inline here (the real job function, no Redis round trip) so each test can assert
+on the outcome right after delivery; test_worker.py covers the ARQ path end to end.
+"""
+
+from collections.abc import Iterator
 from decimal import Decimal
 from typing import Any
 
 import pytest
+from fastapi import FastAPI
 from httpx import AsyncClient, Response
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from eve.api.deps import get_task_queue
 from eve.auth.models import User
 from eve.bookings.models import Booking
 from eve.bookings.state import BookingStatus
 from eve.cli.commands import build_payment_event, send_webhook
+from eve.core.config import Settings
+from eve.core.db import create_session_factory
+from eve.payments.jobs import process_webhook_event
 from eve.payments.models import Payment, PaymentStatus, WebhookEvent, WebhookEventStatus
 from eve.payments.webhook import WebhookService
 from eve.payments.webhook_signature import SIGNATURE_HEADER, sign
@@ -17,6 +29,28 @@ from tests.conftest import TEST_WEBHOOK_SECRET
 from tests.factories import AuthHeaders, Offering, PaymentFactory, UserFactory, book
 
 WEBHOOK = "/api/v1/payments/webhook/"
+
+
+class InlineTaskQueue:
+    """Runs a queued job immediately, in-process, as the worker's first attempt would."""
+
+    def __init__(self, settings: Settings, db_engine: AsyncEngine) -> None:
+        self._ctx = {
+            "settings": settings,
+            "session_factory": create_session_factory(db_engine),
+            "job_try": 1,
+        }
+
+    async def enqueue(self, job: str, *args: Any, job_id: str | None = None) -> bool:
+        await process_webhook_event(self._ctx | {"job_id": job_id}, *args)
+        return True
+
+
+@pytest.fixture(autouse=True)
+def run_jobs_inline(app: FastAPI, settings: Settings, db_engine: AsyncEngine) -> Iterator[None]:
+    app.dependency_overrides[get_task_queue] = lambda: InlineTaskQueue(settings, db_engine)
+    yield
+    app.dependency_overrides.clear()
 
 
 async def deliver(client: AsyncClient, event: dict[str, Any], repeat: int = 1) -> list[Response]:
@@ -378,7 +412,7 @@ async def test_webhook_amounts_are_compared_as_decimals(
     assert (await refreshed(db_session, booking)).status is BookingStatus.CONFIRMED
 
 
-async def test_event_is_kept_for_retry_when_processing_crashes(
+async def test_event_is_acknowledged_and_kept_when_processing_crashes(
     client: AsyncClient,
     db_session: AsyncSession,
     offering: Offering,

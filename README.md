@@ -13,5 +13,6 @@ uv run alembic upgrade head              # apply database migrations
 uv run eve seed                          # demo centres, tests and prices (idempotent)
 ADMIN_PASSWORD=... uv run eve create-admin --email you@example.com
 uv run uvicorn eve.main:create_app --factory --reload   # http://localhost:8000/docs
+uv run arq eve.worker.settings.WorkerSettings           # background worker (needs Redis)
 uv run pytest                            # starts a throwaway Postgres via testcontainers
 ```
