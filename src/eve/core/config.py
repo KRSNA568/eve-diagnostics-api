@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,6 +31,15 @@ class Settings(BaseSettings):
     db_echo: bool = False
     # Supavisor in transaction mode (port 6543) cannot use server-side prepared statements.
     db_disable_prepared_statements: bool = True
+
+    # --- Auth -----------------------------------------------------------------------------
+    # Generate with: python -c "import secrets; print(secrets.token_urlsafe(64))"
+    jwt_secret_key: SecretStr = Field(min_length=32)
+    jwt_algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
+    jwt_issuer: str = "eve-api"
+    jwt_audience: str = "eve-api"
+    access_token_ttl_minutes: int = Field(default=15, gt=0)
+    refresh_token_ttl_days: int = Field(default=7, gt=0)
 
     @field_validator("database_url", "migrations_database_url")
     @classmethod

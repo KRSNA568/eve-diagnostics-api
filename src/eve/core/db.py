@@ -1,8 +1,9 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, ClassVar
 from uuid import UUID
 
-from sqlalchemy import DateTime, MetaData, func
+from sqlalchemy import DateTime, Dialect, MetaData, TypeDecorator, func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -24,20 +25,53 @@ NAMING_CONVENTION = {
 }
 
 
+class UTCDateTime(TypeDecorator[datetime]):
+    """`timestamptz` that refuses naive datetimes and always returns UTC.
+
+    Postgres renders timestamptz in the *session* time zone, so without this the API's
+    output would depend on the server's locale. Setting the session time zone at connect
+    time is not an option behind Supabase's transaction pooler, so normalise here.
+    """
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("naive datetimes are not allowed; use timezone-aware values")
+        return value
+
+    def process_result_value(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        return value.astimezone(UTC) if value is not None else None
+
+
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
-    # Every `Mapped[datetime]` column is timezone-aware (timestamptz), stored in UTC.
-    type_annotation_map: ClassVar[dict[Any, Any]] = {datetime: DateTime(timezone=True)}
+    type_annotation_map: ClassVar[dict[Any, Any]] = {datetime: UTCDateTime}
 
 
 class UUIDPrimaryKeyMixin:
     # UUIDv7 is time-ordered: unguessable like v4, but inserts stay append-only in the index.
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid7)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid7, sort_order=-100)
 
 
 class TimestampMixin:
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+    # sort_order keeps `id` first and timestamps last in generated tables.
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now(), sort_order=100)
+    updated_at: Mapped[datetime] = mapped_column(
+        server_default=func.now(), onupdate=func.now(), sort_order=101
+    )
+
+
+def violated_constraint(exc: IntegrityError) -> str | None:
+    """Name of the constraint behind an IntegrityError (psycopg exposes it via `diag`).
+
+    Lets services translate a specific constraint violation into a domain error, which is
+    race-safe unlike a check-then-insert.
+    """
+    diag = getattr(exc.orig, "diag", None)
+    name: str | None = getattr(diag, "constraint_name", None)
+    return name
 
 
 def create_engine(settings: Settings) -> AsyncEngine:

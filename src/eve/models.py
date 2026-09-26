@@ -4,6 +4,7 @@ Importing this module registers every ORM model on `Base.metadata`, which Alembi
 autogenerate and the test suite rely on. Add each new feature's models here.
 """
 
+from eve.auth.models import User
 from eve.core.db import Base
 
-__all__ = ["Base"]
+__all__ = ["Base", "User"]

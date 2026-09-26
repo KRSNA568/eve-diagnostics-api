@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncEngine
 from testcontainers.community.postgres import PostgresContainer
 
@@ -20,6 +21,7 @@ from eve.core.db import create_engine
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 POSTGRES_IMAGE = "postgres:16-alpine"
+TEST_JWT_SECRET = "test-only-jwt-secret-that-is-at-least-32-bytes-long"
 
 
 @pytest.fixture(scope="session")
@@ -33,7 +35,12 @@ def database_url() -> Iterator[str]:
 
 @pytest.fixture(scope="session")
 def settings(database_url: str) -> Settings:
-    return Settings(_env_file=None, environment="test", database_url=database_url)
+    return Settings(
+        _env_file=None,
+        environment="test",
+        database_url=database_url,
+        jwt_secret_key=SecretStr(TEST_JWT_SECRET),
+    )
 
 
 @pytest.fixture(scope="session")

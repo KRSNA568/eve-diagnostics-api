@@ -7,10 +7,12 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from eve.auth.models import User
 from eve.core.config import Settings
 from eve.core.db import create_session_factory
 from eve.main import create_app
 from eve.models import Base
+from tests.factories import AuthHeaders, UserFactory
 
 
 @pytest.fixture
@@ -28,9 +30,25 @@ async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
 
 @pytest.fixture
 async def db_session(db_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
-    """A session for arranging data and asserting on it directly."""
+    """A session for arranging data and asserting on it directly; factories persist via it."""
     async with create_session_factory(db_engine)() as session:
+        UserFactory.__async_session__ = session
         yield session
+
+
+@pytest.fixture
+async def user(db_session: AsyncSession) -> User:
+    return await UserFactory.create_async()
+
+
+@pytest.fixture
+async def admin(db_session: AsyncSession) -> User:
+    return await UserFactory.create_async(is_admin=True)
+
+
+@pytest.fixture
+def auth_headers(settings: Settings) -> AuthHeaders:
+    return AuthHeaders(settings)
 
 
 @pytest.fixture(autouse=True)
