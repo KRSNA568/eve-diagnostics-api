@@ -2,6 +2,7 @@ from fastapi import APIRouter, status
 
 from eve.api import health
 from eve.auth import router as auth
+from eve.catalog import router as catalog
 from eve.core.errors import ErrorResponse
 
 # Documents the shared error envelope on every route (and replaces FastAPI's default
@@ -20,3 +21,5 @@ api_router = APIRouter(
 )
 api_router.include_router(health.router)
 api_router.include_router(auth.router)
+api_router.include_router(catalog.centres_router)
+api_router.include_router(catalog.tests_router)

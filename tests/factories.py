@@ -5,6 +5,7 @@ fields that matter to them, e.g. `await UserFactory.create_async(is_admin=True)`
 The integration conftest binds `__async_session__` to the test's session.
 """
 
+from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
@@ -12,7 +13,9 @@ from polyfactory import Ignore, Use
 from polyfactory.factories.sqlalchemy_factory import SQLAlchemyFactory
 
 from eve.auth.models import User
+from eve.catalog.models import CentreTest, DiagnosticCentre, DiagnosticTest
 from eve.core.config import Settings
+from eve.core.db import Base
 from eve.core.security import TokenType, create_token, hash_password
 
 TEST_PASSWORD = "Password123"
@@ -20,17 +23,56 @@ TEST_PASSWORD = "Password123"
 TEST_PASSWORD_HASH = hash_password(TEST_PASSWORD)
 
 
-class UserFactory(SQLAlchemyFactory[User]):
-    __set_primary_key__ = False  # use the model's UUIDv7 default
+class ModelFactory[T: Base](SQLAlchemyFactory[T]):
+    """Shared factory settings for every ORM model."""
 
+    __is_base_factory__ = True
+    __set_primary_key__ = False  # use the model's UUIDv7 default
+    # Never invent related rows implicitly: tests create exactly the data they need.
+    __set_relationships__ = False
+    created_at = Ignore()  # server defaults
+    updated_at = Ignore()
+
+
+class UserFactory(ModelFactory[User]):
     email = Use(lambda: f"user-{uuid4().hex[:12]}@example.com")
     password_hash = Use(lambda: TEST_PASSWORD_HASH)
     full_name = Use(lambda: UserFactory.__faker__.name())
     phone = None
     is_active = True
     is_admin = False
-    created_at = Ignore()
-    updated_at = Ignore()
+
+
+class CentreFactory(ModelFactory[DiagnosticCentre]):
+    name = Use(lambda: f"Centre {uuid4().hex[:8]}")
+    address = "1 Test Road"
+    city = "Mumbai"
+    pincode = "400053"
+    is_active = True
+
+
+class DiagnosticTestFactory(ModelFactory[DiagnosticTest]):
+    code = Use(lambda: f"T{uuid4().hex[:8].upper()}")
+    name = Use(lambda: f"Test {uuid4().hex[:8]}")
+    description = None
+    is_active = True
+
+
+class OfferingFactory(ModelFactory[CentreTest]):
+    """Pass `centre_id` and `test_id` explicitly."""
+
+    price = Decimal("499.00")
+    currency = "INR"
+    is_available = True
+
+
+# Every factory whose `__async_session__` the integration conftest binds per test.
+PERSISTED_FACTORIES: tuple[type[ModelFactory[Any]], ...] = (
+    UserFactory,
+    CentreFactory,
+    DiagnosticTestFactory,
+    OfferingFactory,
+)
 
 
 class AuthHeaders:

@@ -56,6 +56,10 @@ class UUIDPrimaryKeyMixin:
 
 
 class TimestampMixin:
+    # Fetch server-generated values (created_at / updated_at) with RETURNING on flush, so
+    # reading them afterwards never triggers an implicit - and in async, illegal - reload.
+    __mapper_args__: ClassVar[dict[str, Any]] = {"eager_defaults": True}
+
     # sort_order keeps `id` first and timestamps last in generated tables.
     created_at: Mapped[datetime] = mapped_column(server_default=func.now(), sort_order=100)
     updated_at: Mapped[datetime] = mapped_column(

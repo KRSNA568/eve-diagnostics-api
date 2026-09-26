@@ -12,7 +12,7 @@ from eve.core.config import Settings
 from eve.core.db import create_session_factory
 from eve.main import create_app
 from eve.models import Base
-from tests.factories import AuthHeaders, UserFactory
+from tests.factories import PERSISTED_FACTORIES, AuthHeaders, UserFactory
 
 
 @pytest.fixture
@@ -32,7 +32,8 @@ async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
 async def db_session(db_engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
     """A session for arranging data and asserting on it directly; factories persist via it."""
     async with create_session_factory(db_engine)() as session:
-        UserFactory.__async_session__ = session
+        for factory in PERSISTED_FACTORIES:
+            factory.__async_session__ = session
         yield session
 
 

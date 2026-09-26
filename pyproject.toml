@@ -18,6 +18,9 @@ dependencies = [
     "uvicorn[standard]>=0.54.0",
 ]
 
+[project.scripts]
+eve = "eve.cli.__main__:main"
+
 [dependency-groups]
 dev = [
     "asgi-lifespan>=2.1.0",
@@ -42,16 +45,16 @@ script_location = "%(here)s/migrations"
 file_template = "%%(rev)s_%%(slug)s"
 
 [[tool.alembic.post_write_hooks]]
-name = "ruff_check"
-type = "module"
-module = "ruff"
-options = "check --fix REVISION_SCRIPT_FILENAME"
-
-[[tool.alembic.post_write_hooks]]
 name = "ruff_format"
 type = "module"
 module = "ruff"
 options = "format REVISION_SCRIPT_FILENAME"
+
+[[tool.alembic.post_write_hooks]]
+name = "ruff_check"
+type = "module"
+module = "ruff"
+options = "check --fix REVISION_SCRIPT_FILENAME"
 
 # ---------------------------------------------------------------- ruff
 [tool.ruff]
@@ -103,6 +106,8 @@ addopts = "-ra --strict-markers --strict-config"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
+# Deprecations surface as failures now, not as surprises during an upgrade.
+filterwarnings = ["error"]
 
 [tool.coverage.run]
 source = ["eve"]
